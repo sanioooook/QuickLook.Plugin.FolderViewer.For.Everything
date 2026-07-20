@@ -2,14 +2,16 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("QuickLook.Plugin.FolderViewer.Tests")]
+
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("QuickLook.Plugin.FolderViewer")]
+[assembly: AssemblyTitle("QuickLook.Plugin.FolderViewer.For.Everything")]
 [assembly: AssemblyDescription("Folder Viewer Plugin for QuickLook")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("pooi.moe")]
-[assembly: AssemblyProduct("QuickLook.Plugin.FolderViewer")]
+[assembly: AssemblyProduct("QuickLook.Plugin.FolderViewer.For.Everything")]
 [assembly: AssemblyCopyright("Copyright © Paddy Xu 2018, Frank Becker, Adyanth H")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

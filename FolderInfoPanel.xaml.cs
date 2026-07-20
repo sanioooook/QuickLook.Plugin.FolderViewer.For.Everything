@@ -1,176 +1,312 @@
-﻿// Copyright © 2020 Paddy Xu, Frank Becker
-// 
-// This file is part of QuickLook program.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// Copyright © 2020 Paddy Xu, Frank Becker
+// This file remains available under the GNU General Public License v3 or later.
 
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.IO;
-using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
-using QuickLook.Common.Annotations;
-using QuickLook.Common.ExtensionMethods;
 
 namespace QuickLook.Plugin.FolderViewer
 {
-    /// <summary>
-    ///     Interaction logic for FolderInfoPanel.xaml
-    /// </summary>
-    public partial class FolderInfoPanel : UserControl, IDisposable, INotifyPropertyChanged
+    public partial class FolderInfoPanel : UserControl, IDisposable
     {
-        private readonly Dictionary<string, FileEntry> _fileEntries = new Dictionary<string, FileEntry>();
+        private readonly CancellationTokenSource _cancellation = new CancellationTokenSource();
+        private readonly CancellationToken _cancellationToken;
+        private readonly EverythingFolderSizeProvider _folderSizeProvider = new EverythingFolderSizeProvider();
+        private readonly Task<FolderAggregateQueryResult> _indexedStatisticsTask;
+        private readonly string _path;
         private bool _disposed;
-        private double _loadPercent;
-        private bool _stop;
+        private bool _indexedCounts;
+        private long? _indexedTotalSize;
 
         public FolderInfoPanel(string path)
         {
+            _path = path ?? throw new ArgumentNullException(nameof(path));
+            _cancellationToken = _cancellation.Token;
             InitializeComponent();
 
-            // design-time only
             Resources.MergedDictionaries.Clear();
+            fileListView.Configure(LoadChildrenAsync, _cancellationToken);
 
-            BeginLoadDirectory(path);
-        }
-        public bool Stop
-        {
-            set => _stop = value;
-            get => _stop;
-        }
-
-        public double LoadPercent
-        {
-            get => _loadPercent;
-            private set
-            {
-                if (value == _loadPercent) return;
-                _loadPercent = value;
-                OnPropertyChanged();
-            }
+            _indexedStatisticsTask = LoadIndexedStatisticsAsync();
+            LoadRootAsync();
         }
 
         public void Dispose()
         {
-            GC.SuppressFinalize(this);
+            if (_disposed)
+                return;
 
             _disposed = true;
-
+            _cancellation.Cancel();
             fileListView.Dispose();
+            _folderSizeProvider.Dispose();
+            _cancellation.Dispose();
+            GC.SuppressFinalize(this);
         }
 
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        private void BeginLoadDirectory(string path)
+        private async void LoadRootAsync()
         {
-            new Task(() =>
+            try
             {
-                var root = new FileEntry(Path.GetDirectoryName(path), true);
-                _fileEntries.Add(path, root);
+                var result = await Task.Run(
+                    () => DirectoryEnumerator.ReadForPreview(_path, _cancellationToken),
+                    _cancellationToken);
+                if (_disposed)
+                    return;
 
-                LoadItemsFromFolder(path, ref _stop,
-                    out var totalDirsL, out var totalFilesL, out var totalSizeL);
+                if (result.ErrorCode != 0)
+                    throw new Win32Exception(result.ErrorCode);
 
-                Dispatcher.Invoke(() =>
+                await RunOnUiThreadAsync(() =>
                 {
-                    if (_disposed)
-                        return;
+                    fileListView.SetItems(result.Entries);
+                    QueueFolderSizeLookups(result.Entries);
+                    rootLoading.Visibility = Visibility.Collapsed;
+                    statisticsStatus.Text = result.WasTruncated ? "预览已截断" : "就绪";
+                    LoadStatisticsAsync();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                await RunOnUiThreadAsync(() =>
+                {
+                    rootLoading.Visibility = Visibility.Collapsed;
+                    rootError.Text = "无法读取此文件夹。\n" + exception.Message;
+                    rootError.Visibility = Visibility.Visible;
+                    statisticsProgress.Visibility = Visibility.Collapsed;
+                    statisticsStatus.Text = "不可用";
+                });
+            }
+        }
 
-                    fileListView.SetDataContext(_fileEntries[path].Children.Keys);
-                    totalSize.Content =
-                        $"Total size: {totalSizeL.ToPrettySize(2)}";
-                    numFolders.Content =
-                        $"Folders: {totalDirsL}";
-                    numFiles.Content = 
-                        $"Files: {totalFilesL}";
+        private async Task<IReadOnlyList<FileEntry>> LoadChildrenAsync(
+            FileEntry entry,
+            CancellationToken cancellationToken)
+        {
+            LoadIndexedEntrySizeAsync(entry);
+            var result = await Task.Run(
+                () => DirectoryEnumerator.ReadForPreview(entry.FullPath, cancellationToken),
+                cancellationToken);
+            if (result.ErrorCode != 0)
+                throw new Win32Exception(result.ErrorCode);
+
+            await RunOnUiThreadAsync(() => QueueFolderSizeLookups(result.Entries));
+            return result.Entries;
+        }
+
+        private void QueueFolderSizeLookups(IReadOnlyList<FileEntry> entries)
+        {
+            if (entries == null)
+                return;
+
+            foreach (var entry in entries)
+            {
+                if (entry.IsFolder)
+                    LoadIndexedEntrySizeAsync(entry);
+            }
+        }
+
+        private async void LoadIndexedEntrySizeAsync(FileEntry entry)
+        {
+            try
+            {
+                var result = await _folderSizeProvider.QueryAsync(entry.FullPath, _cancellationToken);
+                if (!_disposed && result.IsSuccess)
+                    await RunOnUiThreadAsync(() => entry.SetIndexedSize(result.Size));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch
+            {
+                // Everything is an optional accelerator; an IPC failure must not affect browsing.
+            }
+        }
+
+        private async Task<FolderAggregateQueryResult> LoadIndexedStatisticsAsync()
+        {
+            try
+            {
+                var result = await _folderSizeProvider.QueryStatisticsAsync(_path, _cancellationToken);
+                if (_disposed)
+                    return default(FolderAggregateQueryResult);
+
+                await RunOnUiThreadAsync(() =>
+                {
+                    if (result.HasSize)
+                    {
+                        _indexedTotalSize = result.Size;
+                        totalSize.Text = "总大小：" + ByteSizeFormatter.Format(result.Size);
+                        totalSize.ToolTip = result.Source;
+                    }
+
+                    if (result.HasCounts)
+                    {
+                        _indexedCounts = true;
+                        numFolders.Text = "文件夹：" + result.DirectoryCount.ToString("N0");
+                        numFiles.Text = "文件：" + result.FileCount.ToString("N0");
+                    }
+
+                    if (result.HasSize || result.HasCounts)
+                        statisticsStatus.Text = "Everything 索引";
                 });
 
-                LoadPercent = 100d;
-            }).Start();
-        }
-
-        // based on InfoPanel.FileHelper.CountFolder
-        public void LoadItemsFromFolder(string root, ref bool stop, out long totalDirs, out long totalFiles,
-    out long totalSize)
-        {
-            totalDirs = totalFiles = totalSize = 0L;
-
-            var stack = new Stack<DirectoryInfo>();
-            stack.Push(new DirectoryInfo(root));
-
-            do
+                return result;
+            }
+            catch (OperationCanceledException)
             {
-                if (stop)
-                    break;
-
-                var pos = stack.Pop();
-
-                try
-                {
-                    _fileEntries.TryGetValue(pos.FullName, out var fileParent);
-
-                    // process files in current directory
-                    foreach (var file in pos.EnumerateFiles())
-                    {
-                        totalFiles++;
-                        totalSize += file.Length;
-
-                        _fileEntries.Add(file.FullName, new FileEntry(file.Name, false, fileParent)
-                        {
-                            Size = (ulong)file.Length,
-                            ModifiedDate = file.LastWriteTime,
-                            FullPath = file.FullName
-                        }); ;
-
-                    }
-
-                    // then push all sub-directories
-                    foreach (var dir in pos.EnumerateDirectories())
-                    {
-                        totalDirs++;
-                        stack.Push(dir);
-
-                        _fileEntries.TryGetValue(GetDirectoryName(dir.FullName), out var parent);
-
-                        var afe = new FileEntry(dir.Name, true, parent)
-                        {
-                            FullPath = dir.FullName
-                        };
-                        _fileEntries.Add(dir.FullName, afe);
-                    }
-                }
-                catch (Exception)
-                {
-                    totalDirs++;
-                    //pos = stack.Pop();
-                }
-            } while (stack.Count != 0);
+                return default(FolderAggregateQueryResult);
+            }
+            catch (ObjectDisposedException)
+            {
+                return default(FolderAggregateQueryResult);
+            }
+            catch
+            {
+                return default(FolderAggregateQueryResult);
+            }
         }
 
-        private string GetDirectoryName(string path)
+        private async void LoadStatisticsAsync()
         {
-            var d = Path.GetDirectoryName(path);
+            try
+            {
+                var indexed = await _indexedStatisticsTask;
+                if (_disposed)
+                    return;
+                if (indexed.HasSize && indexed.HasCounts)
+                {
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        statisticsProgress.Visibility = Visibility.Collapsed;
+                        statisticsStatus.Text = "Everything 索引";
+                    });
+                    return;
+                }
 
-            return d ?? "";
+                if (DirectoryStatisticsScanner.IsNetworkPath(_path))
+                {
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        numFolders.Text = "文件夹：未扫描";
+                        numFiles.Text = "文件：未扫描";
+                        if (!_indexedTotalSize.HasValue)
+                            totalSize.Text = "总大小：未扫描";
+                        statisticsProgress.Visibility = Visibility.Collapsed;
+                        statisticsStatus.Text = _indexedTotalSize.HasValue || _indexedCounts
+                            ? "Everything 索引"
+                            : "网络文件夹";
+                    });
+                    return;
+                }
+
+                await Task.Delay(350, _cancellationToken);
+                var statistics = await Task.Factory.StartNew(
+                    () =>
+                    {
+                        Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+                        return DirectoryStatisticsScanner.Scan(
+                            _path,
+                            _cancellationToken,
+                            QueueStatisticsUpdate);
+                    },
+                    _cancellationToken,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+
+                await RunOnUiThreadAsync(() => ApplyStatistics(statistics));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                await RunOnUiThreadAsync(() =>
+                {
+                    statisticsProgress.Visibility = Visibility.Collapsed;
+                    statisticsStatus.Text = "统计不可用";
+                    statisticsStatus.ToolTip = exception.Message;
+                });
+            }
         }
 
-        [NotifyPropertyChangedInvocator]
-        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        private void QueueStatisticsUpdate(DirectoryStatistics statistics)
         {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            if (_disposed)
+                return;
+
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() => ApplyStatistics(statistics)));
+            }
+            catch (Exception exception) when (
+                exception is TaskCanceledException ||
+                exception is InvalidOperationException)
+            {
+            }
+        }
+
+        private void ApplyStatistics(DirectoryStatistics statistics)
+        {
+            if (_disposed)
+                return;
+
+            if (!_indexedCounts)
+            {
+                numFolders.Text = "文件夹：" + statistics.DirectoryCount.ToString("N0");
+                numFiles.Text = "文件：" + statistics.FileCount.ToString("N0");
+            }
+            if (!_indexedTotalSize.HasValue)
+                totalSize.Text = "总大小：" + ByteSizeFormatter.Format(statistics.TotalSize);
+
+            if (statistics.IsComplete)
+            {
+                statisticsProgress.Visibility = Visibility.Collapsed;
+                statisticsStatus.Text = statistics.InaccessibleDirectoryCount == 0
+                    ? (_indexedTotalSize.HasValue ? "索引大小" : "完成")
+                    : $"已跳过：{statistics.InaccessibleDirectoryCount:N0}";
+            }
+            else
+            {
+                statisticsStatus.Text = "统计中...";
+            }
+        }
+
+        private async Task RunOnUiThreadAsync(Action action)
+        {
+            if (_disposed || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
+
+            try
+            {
+                if (Dispatcher.CheckAccess())
+                {
+                    if (!_disposed)
+                        action();
+                    return;
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (!_disposed)
+                        action();
+                }).Task.ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is OperationCanceledException ||
+                exception is InvalidOperationException)
+            {
+            }
         }
     }
 }

@@ -1,48 +1,64 @@
-﻿<UserControl x:Class="QuickLook.Plugin.FolderViewer.FolderInfoPanel"
+<UserControl x:Class="QuickLook.Plugin.FolderViewer.FolderInfoPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:local="clr-namespace:QuickLook.Plugin.FolderViewer"
-             mc:Ignorable="d"
-             x:Name="infoPanel"
-             d:DesignHeight="600" d:DesignWidth="800">
+             x:Name="infoPanel">
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <!-- only for design -->
+                <!-- Design-time resources; removed when hosted by QuickLook. -->
                 <ResourceDictionary Source="/QuickLook.Common;component/Styles/MainWindowStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
-            <local:Percent100ToVisibilityVisibleConverter x:Key="Percent100ToVisibilityVisibleConverter" />
-            <local:Percent100ToVisibilityCollapsedConverter x:Key="Percent100ToVisibilityCollapsedConverter" />
         </ResourceDictionary>
     </UserControl.Resources>
+
     <Grid>
-        <Grid ZIndex="9999"
-              Visibility="{Binding ElementName=infoPanel, Path=LoadPercent, Mode=OneWay, Converter={StaticResource Percent100ToVisibilityCollapsedConverter}}">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Label x:Name="lblLoading" FontSize="14" HorizontalAlignment="Center" Foreground="{DynamicResource WindowTextForeground}">Loading ...</Label>
-                <ProgressBar Height="13" Width="150"
-                             Value="{Binding ElementName=infoPanel, Path=LoadPercent, Mode=OneWay}" />
+        <Grid.RowDefinitions>
+            <RowDefinition />
+            <RowDefinition Height="34" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <local:FileListView x:Name="fileListView" Focusable="False"
+                                Foreground="{DynamicResource WindowTextForeground}" />
+
+            <StackPanel x:Name="rootLoading" HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <ProgressBar Width="150" Height="4" IsIndeterminate="True" />
+                <TextBlock Margin="0,10,0,0" Text="正在读取文件夹..."
+                           HorizontalAlignment="Center"
+                           Foreground="{DynamicResource WindowTextForegroundAlternative}" />
             </StackPanel>
+
+            <TextBlock x:Name="rootError" Visibility="Collapsed"
+                       Margin="32" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextWrapping="Wrap" TextAlignment="Center"
+                       Foreground="{DynamicResource WindowTextForegroundAlternative}" />
         </Grid>
-        <Grid
-            Visibility="{Binding ElementName=infoPanel, Path=LoadPercent, Mode=OneWay, Converter={StaticResource Percent100ToVisibilityVisibleConverter}}">
-            <Grid.RowDefinitions>
-                <RowDefinition />
-                <RowDefinition Height="30" />
-            </Grid.RowDefinitions>
-            <local:FileListView Grid.Row="0" x:Name="fileListView" Focusable="False" Foreground="{DynamicResource WindowTextForeground}" />
-            <Grid Grid.Row="1">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="40*" />
-                    <ColumnDefinition Width="30*" />
-                    <ColumnDefinition Width="30*" />
-                </Grid.ColumnDefinitions>
-                <Label x:Name="totalSize" Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource WindowTextForegroundAlternative}">Total Size: 0B</Label>
-                <Label x:Name="numFolders" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource WindowTextForegroundAlternative}">Folders: 0</Label>
-                <Label x:Name="numFiles" Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource WindowTextForegroundAlternative}">Files: 0</Label>
-            </Grid>
+
+        <Grid Grid.Row="1" Margin="12,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock x:Name="totalSize" Grid.Column="0" VerticalAlignment="Center"
+                       Text="总大小：计算中..."
+                       Foreground="{DynamicResource WindowTextForegroundAlternative}" />
+            <TextBlock x:Name="numFolders" Grid.Column="1" VerticalAlignment="Center"
+                       Text="文件夹：计算中..."
+                       Foreground="{DynamicResource WindowTextForegroundAlternative}" />
+            <TextBlock x:Name="numFiles" Grid.Column="2" VerticalAlignment="Center"
+                       Text="文件：计算中..."
+                       Foreground="{DynamicResource WindowTextForegroundAlternative}" />
+            <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                <ProgressBar x:Name="statisticsProgress" Width="48" Height="3"
+                             Margin="0,0,8,0" IsIndeterminate="True" />
+                <TextBlock x:Name="statisticsStatus" Text="正在开始..."
+                           Foreground="{DynamicResource WindowTextForegroundAlternative}" />
+            </StackPanel>
         </Grid>
     </Grid>
 </UserControl>

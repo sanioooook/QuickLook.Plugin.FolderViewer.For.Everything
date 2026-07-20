@@ -25,8 +25,6 @@ namespace QuickLook.Plugin.FolderViewer
     public class Plugin : IViewer
     {
         private FolderInfoPanel _panel;
-        private bool _isDirectory;
-
         public int Priority => -5;
 
         public void Init()
@@ -38,8 +36,7 @@ namespace QuickLook.Plugin.FolderViewer
             if (Path.GetPathRoot(path) == path)
                 return false;
 
-            _isDirectory = Directory.Exists(path);
-            return _isDirectory;
+            return Directory.Exists(path);
         }
 
         public void Prepare(string path, ContextObject context)
@@ -49,9 +46,12 @@ namespace QuickLook.Plugin.FolderViewer
 
         public void View(string path, ContextObject context)
         {
-            _panel = new FolderInfoPanel(path);
+            var previousPanel = _panel;
+            var panel = new FolderInfoPanel(path);
+            _panel = panel;
+            previousPanel?.Dispose();
 
-            context.ViewerContent = _panel;
+            context.ViewerContent = panel;
             context.Title = $"{Path.GetFileName(path)}";
 
             context.IsBusy = false;
@@ -59,11 +59,10 @@ namespace QuickLook.Plugin.FolderViewer
 
         public void Cleanup()
         {
-            GC.SuppressFinalize(this);
-
-            _panel.Stop = true;
-            _panel?.Dispose();
+            var panel = _panel;
             _panel = null;
+            panel?.Dispose();
+            GC.SuppressFinalize(this);
         }
     }
 }

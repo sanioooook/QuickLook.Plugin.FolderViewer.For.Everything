@@ -1,63 +1,139 @@
-﻿// Copyright © 2020 Paddy Xu, Frank Becker
-// 
-// This file is part of QuickLook program.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// Copyright © 2020 Paddy Xu, Frank Becker
+// This file remains available under the GNU General Public License v3 or later.
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace QuickLook.Plugin.FolderViewer
 {
-    public class FileEntry : IComparable<FileEntry>
+    public sealed class FileEntry : IComparable<FileEntry>, INotifyPropertyChanged
     {
-        private readonly FileEntry _parent;
+        private static readonly IReadOnlyList<FileEntry> EmptyChildren = Array.Empty<FileEntry>();
+        private static readonly IReadOnlyList<FileEntry> LoadingChildren =
+            new[] { new FileEntry("加载中...", EntryKind.Placeholder) };
 
-        public FileEntry(string name, bool isFolder, FileEntry parent = null)
+        private IReadOnlyList<FileEntry> _children;
+        private int _loadState;
+        private long? _size;
+
+        public FileEntry(
+            string name,
+            string fullPath,
+            bool isFolder,
+            bool isReparsePoint,
+            long? size,
+            DateTime modifiedDate)
+            : this(name, isFolder ? EntryKind.Folder : EntryKind.File)
         {
-            Name = name;
-            IsFolder = isFolder;
-
-            _parent = parent;
-            _parent?.Children.Add(this, false);
+            FullPath = fullPath;
+            IsReparsePoint = isReparsePoint;
+            _size = size;
+            ModifiedDate = modifiedDate;
         }
 
-        public SortedList<FileEntry, bool> Children { get; set; } = new SortedList<FileEntry, bool>();
+        private FileEntry(string name, EntryKind kind)
+        {
+            Name = name;
+            Kind = kind;
+            _children = kind == EntryKind.Folder ? LoadingChildren : EmptyChildren;
+        }
 
-        public string Name { get; set; }
-        public bool IsFolder { get; set; }
-        public ulong Size { get; set; }
-        public DateTime ModifiedDate { get; set; }
-        public string FullPath { get; set; }
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        public IReadOnlyList<FileEntry> Children => _children;
+
+        public string FullPath { get; }
+
+        public bool IsFolder => Kind == EntryKind.Folder;
+
+        public bool IsPlaceholder => Kind == EntryKind.Placeholder;
+
+        public bool IsReparsePoint { get; }
+
+        public bool IsLoading => Volatile.Read(ref _loadState) == 1;
+
+        public EntryKind Kind { get; }
+
+        public DateTime ModifiedDate { get; }
+
+        public string Name { get; }
+
+        public long? Size
+        {
+            get => _size;
+            private set
+            {
+                if (_size == value)
+                    return;
+
+                _size = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public static FileEntry CreateNotice(string message)
+        {
+            return new FileEntry(message, EntryKind.Notice);
+        }
 
         public int CompareTo(FileEntry other)
         {
-            if (IsFolder == other.IsFolder)
-                return string.Compare(Name, other.Name, StringComparison.CurrentCulture);
-
-            if (IsFolder)
+            if (ReferenceEquals(other, null))
                 return -1;
 
-            return 1;
+            if (IsFolder != other.IsFolder)
+                return IsFolder ? -1 : 1;
+
+            var result = StringComparer.CurrentCultureIgnoreCase.Compare(Name, other.Name);
+            return result != 0 ? result : StringComparer.Ordinal.Compare(Name, other.Name);
+        }
+
+        public bool TryBeginLoading()
+        {
+            return IsFolder && Interlocked.CompareExchange(ref _loadState, 1, 0) == 0;
+        }
+
+        public void CompleteLoading(IReadOnlyList<FileEntry> children)
+        {
+            _children = children ?? EmptyChildren;
+            Volatile.Write(ref _loadState, 2);
+            OnPropertyChanged(nameof(Children));
+            OnPropertyChanged(nameof(IsLoading));
+        }
+
+        public void FailLoading(string message)
+        {
+            _children = new[] { CreateNotice(message) };
+            Volatile.Write(ref _loadState, 2);
+            OnPropertyChanged(nameof(Children));
+            OnPropertyChanged(nameof(IsLoading));
+        }
+
+        public void SetIndexedSize(long size)
+        {
+            if (IsFolder && size >= 0)
+                Size = size;
         }
 
         public override string ToString()
         {
-            if (IsFolder)
-                return $"{Name}";
-
-            return $"{Name},{IsFolder},{Size},{ModifiedDate}";
+            return Name;
         }
+
+        private void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    public enum EntryKind
+    {
+        File,
+        Folder,
+        Placeholder,
+        Notice
     }
 }

@@ -1,86 +1,98 @@
-﻿// Copyright © 2020 Paddy Xu, Frank Becker
-// 
-// This file is part of QuickLook program.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+// Copyright © 2020 Paddy Xu, Frank Becker
+// This file remains available under the GNU General Public License v3 or later.
 
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace QuickLook.Plugin.FolderViewer
 {
-    /// <summary>
-    ///     Interaction logic for FileListView.xaml
-    /// </summary>
     public partial class FileListView : UserControl, IDisposable
     {
+        private CancellationToken _cancellationToken;
+        private bool _disposed;
+        private Func<FileEntry, CancellationToken, Task<IReadOnlyList<FileEntry>>> _loadChildren;
+
         public FileListView()
         {
             InitializeComponent();
         }
 
+        public void Configure(
+            Func<FileEntry, CancellationToken, Task<IReadOnlyList<FileEntry>>> loadChildren,
+            CancellationToken cancellationToken)
+        {
+            _loadChildren = loadChildren ?? throw new ArgumentNullException(nameof(loadChildren));
+            _cancellationToken = cancellationToken;
+        }
+
+        public void SetItems(IReadOnlyList<FileEntry> entries)
+        {
+            treeGrid.DataContext = entries ?? Array.Empty<FileEntry>();
+        }
+
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _loadChildren = null;
+            treeGrid.DataContext = null;
             GC.SuppressFinalize(this);
         }
 
-        public void SetDataContext(object context)
+        private async void OnItemExpanded(object sender, System.Windows.RoutedEventArgs args)
         {
-            treeGrid.DataContext = context;
-
-            treeView.LayoutUpdated += (sender, e) =>
+            if (_disposed || _loadChildren == null || !(sender is TreeViewItem item) ||
+                !(item.DataContext is FileEntry entry) || !entry.TryBeginLoading())
             {
-                // return when empty
-                if (treeView.Items.Count == 0)
-                    return;
+                return;
+            }
 
-                // return when there are more than one root nodes
-                if (treeView.Items.Count > 1)
-                    return;
-
-                var root = (TreeViewItem)treeView.ItemContainerGenerator.ContainerFromItem(treeView.Items[0]);
-                if (root == null)
-                    return;
-
-                root.IsExpanded = true;
-            };
-        }
-
-        private void OnItemMouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs args)
-        {
-            if (sender is TreeViewItem item)
+            try
             {
-                if (!item.IsSelected)
-                {
-                    return;
-                }
-                var fullPath = (item.DataContext as FileEntry).FullPath;
-                if (File.Exists(fullPath) || Directory.Exists(fullPath))
-                {
-                    OpenWithDefaultProgram(fullPath);
-                }
+                var children = await _loadChildren(entry, _cancellationToken);
+                if (!_disposed && !_cancellationToken.IsCancellationRequested)
+                    entry.CompleteLoading(children);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!_disposed)
+                    entry.FailLoading("加载已取消。");
+            }
+            catch (Exception exception)
+            {
+                if (!_disposed)
+                    entry.FailLoading(exception.Message);
             }
         }
 
-        public static void OpenWithDefaultProgram(string path)
+        private void OnItemMouseDoubleClick(object sender, MouseButtonEventArgs args)
         {
-            Process fileopener = new Process();
-            fileopener.StartInfo.FileName = "explorer";
-            fileopener.StartInfo.Arguments = $"\"{path}\"";
-            fileopener.Start();
+            if (_disposed || !(sender is TreeViewItem item) || !item.IsSelected ||
+                !(item.DataContext is FileEntry entry) ||
+                entry.IsPlaceholder || string.IsNullOrEmpty(entry.FullPath))
+            {
+                return;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(entry.FullPath) { UseShellExecute = true });
+                args.Handled = true;
+            }
+            catch (Exception exception) when (
+                exception is Win32Exception ||
+                exception is InvalidOperationException)
+            {
+                // The file may have disappeared after the preview was populated.
+            }
         }
     }
 }

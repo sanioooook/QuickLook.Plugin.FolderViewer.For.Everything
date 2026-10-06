@@ -13,7 +13,7 @@ namespace QuickLook.Plugin.FolderViewer
     {
         private static readonly IReadOnlyList<FileEntry> EmptyChildren = Array.Empty<FileEntry>();
         private static readonly IReadOnlyList<FileEntry> LoadingChildren =
-            new[] { new FileEntry("加载中...", EntryKind.Placeholder) };
+            new[] { new FileEntry(Strings.Get("Loading"), EntryKind.Placeholder) };
 
         private IReadOnlyList<FileEntry> _children;
         private int _loadState;

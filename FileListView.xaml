@@ -60,9 +60,9 @@
                 <ColumnDefinition Width="110" />
                 <ColumnDefinition Width="170" />
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="1" Text="名称" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="2" Text="大小" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="3" Text="修改时间" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{local:Translate Header_Name}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="2" Text="{local:Translate Header_Size}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="3" Text="{local:Translate Header_Modified}" VerticalAlignment="Center" />
         </Grid>
 
         <TreeView Grid.Row="1" x:Name="treeView"

@@ -64,7 +64,7 @@ namespace QuickLook.Plugin.FolderViewer
             catch (OperationCanceledException)
             {
                 if (!_disposed)
-                    entry.FailLoading("加载已取消。");
+                    entry.FailLoading(Strings.Get("LoadingCanceled"));
             }
             catch (Exception exception)
             {

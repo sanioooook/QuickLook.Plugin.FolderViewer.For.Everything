@@ -126,7 +126,11 @@ namespace QuickLook.Plugin.FolderViewer
             {
                 var result = await _folderSizeProvider.QueryAsync(entry.FullPath, _cancellationToken);
                 if (!_disposed && result.IsSuccess)
-                    await RunOnUiThreadAsync(() => entry.SetIndexedSize(result.Size));
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        entry.SetIndexedSize(result.Size);
+                        fileListView.NotifySizeChanged();
+                    });
             }
             catch (OperationCanceledException)
             {

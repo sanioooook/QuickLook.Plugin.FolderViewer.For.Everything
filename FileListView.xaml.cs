@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace QuickLook.Plugin.FolderViewer
 {
@@ -22,6 +23,7 @@ namespace QuickLook.Plugin.FolderViewer
         private bool _disposed;
         private Func<FileEntry, CancellationToken, Task<IReadOnlyList<FileEntry>>> _loadChildren;
         private IReadOnlyList<FileEntry> _items = Array.Empty<FileEntry>();
+        private DispatcherTimer _resortTimer;
 
         public FileListView()
         {
@@ -43,12 +45,40 @@ namespace QuickLook.Plugin.FolderViewer
             treeGrid.DataContext = _items;
         }
 
+        /// <summary>
+        /// Folder sizes arrive from Everything after the list is shown. When sorting by size,
+        /// re-sort once they settle (debounced, so rows don't jump on every folder).
+        /// </summary>
+        public void NotifySizeChanged()
+        {
+            if (_disposed || _sorter.Column != SortColumn.Size)
+                return;
+
+            if (_resortTimer == null)
+            {
+                _resortTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(200)
+                };
+                _resortTimer.Tick += (sender, args) =>
+                {
+                    _resortTimer.Stop();
+                    if (!_disposed && _sorter.Column == SortColumn.Size)
+                        Resort();
+                };
+            }
+
+            _resortTimer.Stop();
+            _resortTimer.Start();
+        }
+
         public void Dispose()
         {
             if (_disposed)
                 return;
 
             _disposed = true;
+            _resortTimer?.Stop();
             _loadChildren = null;
             _items = Array.Empty<FileEntry>();
             treeGrid.DataContext = null;
@@ -89,12 +119,16 @@ namespace QuickLook.Plugin.FolderViewer
             // Same column toggles direction; a new column starts ascending.
             _sorter = new FileEntrySorter(column, column == _sorter.Column && !_sorter.Descending);
             UpdateSortArrows();
+            Resort();
+            args.Handled = true;
+        }
 
+        private void Resort()
+        {
             _items = _sorter.Sort(_items);
             foreach (var entry in _items)
                 entry.ApplySort(_sorter);
             treeGrid.DataContext = _items;
-            args.Handled = true;
         }
 
         private void UpdateSortArrows()

@@ -76,6 +76,7 @@
     <Compile Include="EverythingLegacyIpc.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="FileEntry.cs" />
+    <Compile Include="FileEntrySorter.cs" />
     <Compile Include="FileListView.xaml.cs">
       <DependentUpon>FileListView.xaml</DependentUpon>
     </Compile>

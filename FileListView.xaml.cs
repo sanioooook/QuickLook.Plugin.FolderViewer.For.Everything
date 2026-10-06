@@ -7,6 +7,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
@@ -14,13 +15,18 @@ namespace QuickLook.Plugin.FolderViewer
 {
     public partial class FileListView : UserControl, IDisposable
     {
+        // Shared across previews so the chosen order sticks until QuickLook restarts.
+        private static FileEntrySorter _sorter = FileEntrySorter.Default;
+
         private CancellationToken _cancellationToken;
         private bool _disposed;
         private Func<FileEntry, CancellationToken, Task<IReadOnlyList<FileEntry>>> _loadChildren;
+        private IReadOnlyList<FileEntry> _items = Array.Empty<FileEntry>();
 
         public FileListView()
         {
             InitializeComponent();
+            UpdateSortArrows();
         }
 
         public void Configure(
@@ -33,7 +39,8 @@ namespace QuickLook.Plugin.FolderViewer
 
         public void SetItems(IReadOnlyList<FileEntry> entries)
         {
-            treeGrid.DataContext = entries ?? Array.Empty<FileEntry>();
+            _items = _sorter.Sort(entries);
+            treeGrid.DataContext = _items;
         }
 
         public void Dispose()
@@ -43,6 +50,7 @@ namespace QuickLook.Plugin.FolderViewer
 
             _disposed = true;
             _loadChildren = null;
+            _items = Array.Empty<FileEntry>();
             treeGrid.DataContext = null;
             GC.SuppressFinalize(this);
         }
@@ -59,7 +67,7 @@ namespace QuickLook.Plugin.FolderViewer
             {
                 var children = await _loadChildren(entry, _cancellationToken);
                 if (!_disposed && !_cancellationToken.IsCancellationRequested)
-                    entry.CompleteLoading(children);
+                    entry.CompleteLoading(_sorter.Sort(children));
             }
             catch (OperationCanceledException)
             {
@@ -71,6 +79,30 @@ namespace QuickLook.Plugin.FolderViewer
                 if (!_disposed)
                     entry.FailLoading(exception.Message);
             }
+        }
+
+        private void OnHeaderClick(object sender, MouseButtonEventArgs args)
+        {
+            if (_disposed || !(sender is FrameworkElement header) || !(header.Tag is SortColumn column))
+                return;
+
+            // Same column toggles direction; a new column starts ascending.
+            _sorter = new FileEntrySorter(column, column == _sorter.Column && !_sorter.Descending);
+            UpdateSortArrows();
+
+            _items = _sorter.Sort(_items);
+            foreach (var entry in _items)
+                entry.ApplySort(_sorter);
+            treeGrid.DataContext = _items;
+            args.Handled = true;
+        }
+
+        private void UpdateSortArrows()
+        {
+            var arrow = _sorter.Descending ? "▼" : "▲";
+            nameArrow.Text = _sorter.Column == SortColumn.Name ? arrow : string.Empty;
+            sizeArrow.Text = _sorter.Column == SortColumn.Size ? arrow : string.Empty;
+            modifiedArrow.Text = _sorter.Column == SortColumn.Modified ? arrow : string.Empty;
         }
 
         private void OnItemMouseDoubleClick(object sender, MouseButtonEventArgs args)
